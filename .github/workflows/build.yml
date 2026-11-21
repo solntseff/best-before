@@ -1,0 +1,41 @@
+# Собирает все прошивки на каждый push / pull request.
+# При push тега вида v1.0.0 — создаёт GitHub Release с готовыми .bin.
+name: Build firmware
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core and libraries
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install "GxEPD2@1.6.9" "Adafruit GFX Library@1.13.0" "ArduinoJson@7.4.3"
+
+      - name: Build
+        run: bash firmware/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: firmware/dist/*.bin
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: firmware/dist/*.bin
+          generate_release_notes: true

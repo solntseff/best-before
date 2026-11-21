@@ -1,0 +1,26 @@
+# Запретить просмотр списка файлов
+Options -Indexes
+
+# Принудительный HTTPS
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Защита локальной базы SQLite от скачивания
+<Files "products.db">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# Базовые заголовки безопасности
+<IfModule mod_headers.c>
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-Content-Type-Options "nosniff"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Запрет доступа к скрытым файлам
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>

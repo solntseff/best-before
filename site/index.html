@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Fridge Sync Hub</title>
+  <script src="https://unpkg.com/@zxing/library@0.23.0"></script>
+  <style>
+    :root {
+      --bg: #f5f5f7;
+      --card-bg: #ffffff;
+      --text: #1d1d1f;
+      --accent: #0071e3;
+      --success: #34c759;
+      --danger: #ff3b30;
+      --border: #d2d2d7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); display: flex; justify-content: center; min-height: 100vh; }
+    #app { width: 100%; max-width: 440px; background: var(--card-bg); min-height: 100vh; display: flex; flex-direction: column; position: relative; box-shadow: 0 0 20px rgba(0,0,0,0.05); }
+    
+    header { padding: 18px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 18px; font-weight: 700; }
+    
+    .screen { display: none; padding: 20px; flex: 1; flex-direction: column; }
+    .screen.active { display: flex; }
+
+    .hero { text-align: center; margin-top: 20px; }
+    .hero-icon { font-size: 48px; margin-bottom: 12px; }
+    .hero h2 { font-size: 20px; margin-bottom: 8px; }
+    .hero p { color: #86868b; font-size: 13px; line-height: 1.4; margin-bottom: 20px; }
+
+    .btn { background: var(--accent); color: #fff; border: none; padding: 12px 18px; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer; text-align: center; display: block; width: 100%; transition: opacity 0.2s; }
+    .btn:active { opacity: 0.8; }
+    .btn-ble { background: var(--success); margin-top: 10px; }
+    .btn-secondary { background: #e8e8ed; color: var(--text); margin-top: 10px; }
+    .btn-danger { background: #ffe5e5; color: var(--danger); font-size: 13px; padding: 6px 12px; width: auto; border-radius: 8px; border: none; }
+
+    #scanner-container { width: 100%; height: 260px; background: #000; border-radius: 16px; overflow: hidden; position: relative; margin-bottom: 16px; }
+    video { width: 100%; height: 100%; object-fit: cover; }
+    .scan-guide { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 70%; height: 40%; border: 2px dashed #fff; border-radius: 8px; box-shadow: 0 0 0 1000px rgba(0,0,0,0.4); }
+
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #515154; }
+    input[type="text"], input[type="date"] { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 16px; outline: none; }
+    
+    .presets { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .preset-btn { background: #f0f0f3; border: 1px solid var(--border); padding: 6px 12px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+
+    .product-list { margin-top: 20px; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+    .product-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; }
+    .prod-info h4 { font-size: 15px; margin-bottom: 4px; }
+    .prod-info span { font-size: 12px; color: #86868b; }
+    .days-badge { font-size: 14px; font-weight: 700; background: #f2f2f7; padding: 6px 10px; border-radius: 8px; margin-right: 10px; }
+    .days-badge.urgent { background: #ffe5e5; color: var(--danger); }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <h1>Холодильник Синхро</h1>
+    <span id="queue-count" style="font-size: 13px; color: #86868b;">0 поз.</span>
+  </header>
+
+  <!-- SCREEN 1: Hub -->
+  <section id="screen-hub" class="screen active">
+    <div class="hero">
+      <div class="hero-icon">🧊</div>
+      <h2>Управление запасами</h2>
+      <button class="btn" onclick="openScanner()">+ Сканировать товар</button>
+      <button class="btn btn-secondary" onclick="openManual()">✍️ Внести вручную</button>
+      <button class="btn btn-ble" onclick="sendToDevice()">📡 Отправить на экран (BLE)</button>
+    </div>
+
+    <div style="margin-top: 24px; flex: 1;">
+      <h3 style="font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #86868b; margin-bottom: 12px;">Очередь продуктов</h3>
+      <ul id="items-list" class="product-list"></ul>
+    </div>
+  </section>
+
+  <!-- SCREEN 2: Scanner -->
+  <section id="screen-scanner" class="screen">
+    <h3 style="margin-bottom: 12px;">Наведите на штрихкод</h3>
+    <div id="scanner-container">
+      <video id="camera-preview"></video>
+      <div class="scan-guide"></div>
+    </div>
+    <div id="scan-status" style="text-align: center; font-size: 14px; color: #86868b; margin-bottom: 16px;">Поиск штрихкода...</div>
+    <button class="btn btn-secondary" onclick="closeScanner()">Отмена</button>
+  </section>
+
+  <!-- SCREEN 3: Add / Details -->
+  <section id="screen-details" class="screen">
+    <h3 style="margin-bottom: 16px;">Детали продукта</h3>
+    
+    <div class="form-group">
+      <label>Название товара</label>
+      <input type="text" id="prod-name" placeholder="Название или категория">
+      <small id="source-indicator" style="display:block; margin-top: 4px; font-size: 11px; color: #86868b;"></small>
+    </div>
+
+    <div class="form-group">
+      <label>Годен до (дата)</label>
+      <input type="date" id="prod-date">
+      <div class="presets">
+        <button class="preset-btn" onclick="addDays(1)">+1 день</button>
+        <button class="preset-btn" onclick="addDays(3)">+3 дня</button>
+        <button class="preset-btn" onclick="addDays(5)">+5 дней</button>
+        <button class="preset-btn" onclick="addDays(7)">+1 неделя</button>
+        <button class="preset-btn" onclick="addDays(14)">+2 недели</button>
+      </div>
+    </div>
+
+    <div style="margin-top: 8px;">
+      <button class="btn" onclick="saveProduct()">Сохранить в очередь</button>
+      <button class="btn btn-secondary" onclick="showScreen('screen-hub')">Отмена</button>
+    </div>
+  </section>
+</div>
+
+<script>
+  let codeReader = null;
+  let currentBarcode = '';
+
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  function getItems() {
+    return JSON.parse(localStorage.getItem('fridge_items') || '[]');
+  }
+
+  function renderList() {
+    const items = getItems();
+    const listEl = document.getElementById('items-list');
+    const badgeEl = document.getElementById('queue-count');
+    badgeEl.textContent = `${items.length} поз.`;
+    listEl.innerHTML = '';
+
+    if (items.length === 0) {
+      listEl.innerHTML = '<li style="text-align:center; color:#86868b; font-size:14px; padding: 20px 0;">Очередь пуста</li>';
+      return;
+    }
+
+    items.sort((a, b) => new Date(a.expire) - new Date(b.expire));
+    const today = new Date().setHours(0,0,0,0);
+
+    items.forEach((item) => {
+      const expDate = new Date(item.expire).setHours(0,0,0,0);
+      const diffDays = Math.ceil((expDate - today) / (1000 * 60 * 60 * 24));
+
+      const li = document.createElement('li');
+      li.className = 'product-card';
+      li.innerHTML = `
+        <div style="display:flex; align-items:center;">
+          <div class="days-badge ${diffDays <= 2 ? 'urgent' : ''}">${diffDays < 0 ? 'Истёк' : diffDays + ' дн.'}</div>
+          <div class="prod-info">
+            <h4></h4>
+            <span>до ${item.expire}</span>
+          </div>
+        </div>
+        <button class="btn-danger">✕</button>
+      `;
+      li.querySelector('h4').textContent = item.name;
+      li.querySelector('button').onclick = () => deleteItem(item.addedAt);
+      listEl.appendChild(li);
+    });
+  }
+
+  async function openScanner() {
+  showScreen('screen-scanner');
+  const statusEl = document.getElementById('scan-status');
+  statusEl.textContent = 'Инициализация камеры...';
+
+  try {
+    codeReader = new ZXing.BrowserMultiFormatReader();
+    
+    // Получаем список всех доступных камер
+    const videoInputDevices = await codeReader.getVideoInputDevices();
+    
+    // Ищем заднюю камеру (back / rear / environment)
+    let selectedDeviceId = undefined;
+    const backCamera = videoInputDevices.find(device => 
+      device.label.toLowerCase().includes('back') || 
+      device.label.toLowerCase().includes('rear') ||
+      device.label.toLowerCase().includes('задн')
+    );
+
+    if (backCamera) {
+      selectedDeviceId = backCamera.deviceId;
+    } else if (videoInputDevices.length > 0) {
+      selectedDeviceId = videoInputDevices[videoInputDevices.length - 1].deviceId;
+    }
+
+    codeReader.decodeFromVideoDevice(selectedDeviceId, 'camera-preview', (result, err) => {
+      if (result) {
+        currentBarcode = result.getText();
+        statusEl.textContent = `Считано: ${currentBarcode}`;
+        stopScanner();
+        fetchProductDetails(currentBarcode);
+      }
+    });
+  } catch (err) {
+    statusEl.textContent = 'Ошибка камеры: ' + err.message;
+    console.error(err);
+  }
+}
+
+  function stopScanner() {
+    if (codeReader) {
+      codeReader.reset();
+      codeReader = null;
+    }
+  }
+
+  function closeScanner() {
+    stopScanner();
+    showScreen('screen-hub');
+  }
+
+  async function fetchProductDetails(barcode) {
+    showScreen('screen-details');
+    const nameInput = document.getElementById('prod-name');
+    const indicator = document.getElementById('source-indicator');
+    nameInput.value = '';
+    indicator.textContent = '';
+    addDays(5);
+
+    const localSaved = localStorage.getItem('dict_' + barcode);
+    if (localSaved) {
+      nameInput.value = localSaved;
+      indicator.textContent = 'Найдено в памяти телефона';
+      return;
+    }
+
+    nameInput.placeholder = 'Поиск в базах...';
+
+    try {
+      const res = await fetch(`proxy.php?barcode=${barcode}`);
+      const data = await res.json();
+      if (data.status === 1 && data.name) {
+        nameInput.value = data.name;
+        indicator.textContent = data.source === 'openfoodfacts' ? 'Найдено в Open Food Facts' : 'Найдено в базе сервера';
+      } else {
+        nameInput.placeholder = `Штрихкод ${barcode} (введите название)`;
+        indicator.textContent = 'Новый товар. Введите название — система запомнит его';
+      }
+    } catch (e) {
+      nameInput.placeholder = 'Введите название вручную';
+      indicator.textContent = 'Сетевая ошибка — ввод вручную';
+    }
+  }
+
+  // Ручной ввод без штрихкода: домашняя еда, развесные продукты и т.п.
+  function openManual() {
+    currentBarcode = '';
+    showScreen('screen-details');
+    const nameInput = document.getElementById('prod-name');
+    nameInput.value = '';
+    nameInput.placeholder = 'Например: Борщ';
+    document.getElementById('source-indicator').textContent = '';
+    addDays(3);
+    nameInput.focus();
+  }
+
+  function addDays(days) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    document.getElementById('prod-date').value = d.toISOString().split('T')[0];
+  }
+
+  function saveProduct() {
+    const nameInput = document.getElementById('prod-name');
+    const name = nameInput.value.trim() || 'Без названия';
+    const expire = document.getElementById('prod-date').value;
+
+    if (!expire) {
+      alert('Укажите срок годности');
+      return;
+    }
+
+    const items = getItems();
+    items.push({ barcode: currentBarcode, name, expire, addedAt: new Date().toISOString() });
+    localStorage.setItem('fridge_items', JSON.stringify(items));
+
+    if (currentBarcode) {
+      localStorage.setItem('dict_' + currentBarcode, name);
+
+      const formData = new FormData();
+      formData.append('barcode', currentBarcode);
+      formData.append('name', name);
+      fetch('proxy.php', { method: 'POST', body: formData }).catch(() => {});
+    }
+
+    showScreen('screen-hub');
+    renderList();
+  }
+
+  function deleteItem(addedAt) {
+    const items = getItems().filter(item => item.addedAt !== addedAt);
+    localStorage.setItem('fridge_items', JSON.stringify(items));
+    renderList();
+  }
+
+  // ФУНКЦИЯ ОТПРАВКИ ПО WEB BLUETOOTH
+  // Протокол v2: полный список с датами окончания срока + текущее время.
+  // Устройство само пересчитывает дни, поэтому экран не устаревает.
+  // Сообщение режется на куски: первый начинается с \x02, последний кончается на \n.
+  async function sendToDevice() {
+    const items = getItems();
+    items.sort((a, b) => new Date(a.expire) - new Date(b.expire));
+
+    const payload = {
+      t: Math.floor(Date.now() / 1000),
+      tz: -new Date().getTimezoneOffset(),
+      items: items.map(item => ({ n: item.name, e: item.expire }))
+    };
+
+    if (!navigator.bluetooth) {
+      alert('Этот браузер не поддерживает Bluetooth. На Android откройте сайт в Chrome, на iPhone — в браузере Bluefy.');
+      return;
+    }
+
+    try {
+      const device = await navigator.bluetooth.requestDevice({
+        // Любое из условий: имя устройства или наш сервис в рекламе
+        filters: [
+          { namePrefix: 'Fridge-Tracker' },  // и CrowPanel, и Fridge-Tracker-Color (NOTE4C)
+          { namePrefix: 'Zectrix' },
+          { services: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b'] }
+        ],
+        optionalServices: ['4fafc201-1fb5-459e-8fcc-c5c9c331914b']
+      });
+
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService('4fafc201-1fb5-459e-8fcc-c5c9c331914b');
+      const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+
+      const bytes = new TextEncoder().encode('\x02' + JSON.stringify(payload) + '\n');
+      const CHUNK = 180;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        await characteristic.writeValueWithResponse(bytes.slice(i, i + CHUNK));
+      }
+
+      const reply = new TextDecoder().decode(await characteristic.readValue());
+      await device.gatt.disconnect();
+      if (reply.startsWith('OK')) alert(`✅ Передано на экран: ${reply.slice(3)} поз.`);
+      else alert('Устройство ответило: ' + reply);
+    } catch (error) {
+      alert("Ошибка BLE: " + error.message);
+    }
+  }
+
+  renderList();
+  addDays(5);
+</script>
+</body>
+</html>

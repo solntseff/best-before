@@ -1,0 +1,18 @@
+# Сборка
+firmware/build/
+firmware/dist/
+firmware/build.log
+**/__pycache__/
+
+# Данные сайта: база штрихкодов, введённых пользователями, — не публиковать
+site/products.db
+site/*.db
+
+# Скриншоты, снятые локально
+shot*.png
+
+# ОС / редакторы
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
